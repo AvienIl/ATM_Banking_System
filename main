@@ -1,0 +1,888 @@
+#include <iostream>
+#include <iomanip>
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <windows.h>
+
+using namespace std;
+
+struct Acc {
+    string accnum;
+    string accName;
+    string birthday;
+    string contNum;
+    double InitialDep;
+    string pincode;
+    double balance;
+};
+
+struct Node {
+    Acc data;
+    Node *next;
+
+    Node(Acc x) {
+        data = x;
+        next = NULL;
+    }
+};
+
+class Myclass {
+    private:
+        Node *head;
+        string currentCardPath;
+
+        bool isValidName(const string &name);
+        bool isValidDate(const string &date);
+        bool isValidContact(const string &contact);
+        bool isValidPIN(const string &pin);
+        bool isValidAccNum(const string &accnum);
+
+        // Receipt & UI Helpers
+        void pauseScreen();
+        void drawHeader(const string &title);
+        void printReceiptHeader(const string &txType);
+        void printReceiptRow(const string &label, const string &value);
+        void printReceiptAmountRow(const string &label, double amount);
+        void printReceiptFooter();
+
+        double RegMinDepos    = 5000.0;
+        double MaxWithdraw    = 20000.0;
+        double MaxDeposit     = 20000.0;
+        int MaxPinTries       = 3;
+
+    public:
+        Myclass() : head(NULL), currentCardPath("") {}
+        ~Myclass() {
+            Node *p;
+            while (head != NULL) {
+                p = head;
+                head = head->next;
+                delete p;
+            }
+        }
+        void registerAccount();
+        int locate(string accnum);
+        string generateAccNum();
+        Node* findNode(string accnum);
+        bool verifyPin();
+        void savefile();
+        void loadfile();
+        string detectFlashDrive();
+        string encryptPin(string pin);
+        string decryptPin(string encrypted);
+        void writeCardFile(const string &drivePath, const string &accnum, const string &pin);
+        string readMaskedPin(const string &prompt);
+        bool confirmAction(const string &prompt);
+
+        // Transaction Module & Receipts
+        void checkBalance(Node *p);
+        void withdraw(Node *p, double amt);
+        void deposit(Node *p, double amt);
+        void fundTransfer(Node *sender, const string &recipientAcc, double amt);
+        void printRecipientReceipt(Node *recipient, Node *sender, double amt);
+        void changePin(Node *p, const string &oldPin, const string &newPin);
+        void transactionMenu(Node *p);
+};
+
+void Myclass::pauseScreen() {
+    cout << "\nPress Enter to continue...";
+    cin.ignore(1000, '\n');
+    cin.get();
+}
+
+void Myclass::drawHeader(const string &title) {
+    cout << "==================================================\n";
+    cout << "                ATM BANKING SYSTEM                \n";
+    cout << "==================================================\n";
+    cout << " " << title << "\n";
+    cout << "--------------------------------------------------\n";
+}
+
+void Myclass::printReceiptHeader(const string &txType) {
+    cout << "\n";
+    cout << setfill('=') << setw(50) << "" << setfill(' ') << "\n";
+    cout << setw(35) << "OFFICIAL BANK RECEIPT" << "\n";
+    cout << setw(37) << "BANK OF DIGITAL ACCOUNTS" << "\n";
+    cout << setfill('=') << setw(50) << "" << setfill(' ') << "\n";
+    cout << left << "  " << setw(18) << "TRANSACTION" << ": " << txType << "\n";
+    cout << setfill('-') << setw(50) << "" << setfill(' ') << "\n";
+}
+
+void Myclass::printReceiptRow(const string &label, const string &value) {
+    cout << left << "  " << setw(18) << label << ": " << value << "\n";
+}
+
+void Myclass::printReceiptAmountRow(const string &label, double amount) {
+    cout << left << "  " << setw(18) << label << ": P"
+         << fixed << setprecision(2) << amount << "\n";
+}
+
+void Myclass::printReceiptFooter() {
+    cout << setfill('-') << setw(50) << "" << setfill(' ') << "\n";
+    cout << setw(40) << "THANK YOU FOR BANKING WITH US!" << "\n";
+    cout << setfill('=') << setw(50) << "" << setfill(' ') << "\n\n";
+}
+
+string Myclass::generateAccNum() {
+    string num;
+    do {
+        num = "";
+        num += (char)('1' + rand() % 9);
+        for (int i = 1; i < 5; i++) {
+            num += (char)('0' + rand() % 10);
+        }
+    } while (findNode(num) != NULL);
+    return num;
+}
+
+bool Myclass::isValidAccNum(const string &accnum) {
+    if (accnum.length() != 5) {
+        cout << "[!] Account number must be exactly 5 digits.\n";
+        return false;
+    }
+    for (char c : accnum) {
+        if (c < '0' || c > '9') {
+            cout << "[!] Account number must contain digits only.\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Myclass::isValidName(const string &name) {
+    stringstream ss(name);
+    string word;
+    int wordCount = 0;
+    while (ss >> word) {
+        wordCount++;
+        if (word[0] < 'A' || word[0] > 'Z') {
+            cout << "[!] Each name must start with a capital letter.\n";
+            return false;
+        }
+        for (size_t i = 1; i < word.size(); ++i) {
+            if (word[i] < 'a' || word[i] > 'z') {
+                cout << "[!] Only the first letter of each name should be capital, and letters only.\n";
+                return false;
+            }
+        }
+    }
+    if (wordCount != 3) {
+        cout << "[!] Enter First, Middle, and Surname.\n";
+        return false;
+    }
+
+    if (name.empty()) return false;
+    for (size_t i = 0; i < name.size(); ++i) {
+        if (name[i] >= '0' && name[i] <= '9') {
+            cout << "[!] Enter words only.\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Myclass::isValidDate(const string &date) {
+    int slash1 = (int)date.find('/');
+    int slash2 = (int)date.find('/', slash1 + 1);
+
+    if (slash1 == (int)string::npos || slash2 == (int)string::npos) {
+        cout << "[!] Birthday must be in MM/DD/YYYY format.\n";
+        return false;
+    }
+
+    string monthStr = date.substr(0, slash1);
+    string dayStr   = date.substr(slash1 + 1, slash2 - slash1 - 1);
+    string yearStr  = date.substr(slash2 + 1);
+
+    if (monthStr.empty() || dayStr.empty() || yearStr.length() != 4) {
+        cout << "[!] Birthday must be in MM/DD/YYYY format.\n";
+        return false;
+    }
+
+    for (char c : monthStr) if (c < '0' || c > '9') return false;
+    for (char c : dayStr)   if (c < '0' || c > '9') return false;
+    for (char c : yearStr)  if (c < '0' || c > '9') return false;
+
+    int month = stoi(monthStr);
+    int day   = stoi(dayStr);
+    int year  = stoi(yearStr);
+
+    if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+        cout << "[!] Enter a valid birthday.\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool Myclass::isValidContact(const string &contact) {
+    if (contact.substr(0, 2) != "09" || contact.length() != 11) {
+        cout << "[!] Contact number must start with 09 and contain 11 digits.\n";
+        return false;
+    }
+    for (char c : contact) {
+        if (c < '0' || c > '9') return false;
+    }
+    return true;
+}
+
+bool Myclass::isValidPIN(const string &pin) {
+    if (pin.length() != 4) {
+        cout << "[!] PIN code should contain 4 digits.\n";
+        return false;
+    }
+    for (char c : pin) {
+        if (c < '0' || c > '9') return false;
+    }
+    return true;
+}
+
+string Myclass::encryptPin(string pin) {
+    string result = pin;
+    for (char &c : result) c += 3;
+    return result;
+}
+
+string Myclass::decryptPin(string encrypted) {
+    string result = encrypted;
+    for (char &c : result) c -= 3;
+    return result;
+}
+
+string Myclass::detectFlashDrive() {
+    DWORD drives = GetLogicalDrives();
+    for (int i = 0; i < 26; i++) {
+        if (drives & (1 << i)) {
+            char letter = 'A' + i;
+            string path = string(1, letter) + ":\\";
+            if (GetDriveTypeA(path.c_str()) == DRIVE_REMOVABLE) {
+                return path;
+            }
+        }
+    }
+    return "";
+}
+
+void Myclass::writeCardFile(const string &drivePath, const string &accnum, const string &pin) {
+    ofstream cardFile(drivePath + "pin.code");
+    if (!cardFile) return;
+    cardFile << accnum << "\n" << encryptPin(pin) << "\n";
+    cardFile.close();
+}
+
+string Myclass::readMaskedPin(const string &prompt) {
+    cout << prompt;
+
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD oldMode = 0, charsRead = 0;
+    GetConsoleMode(hStdin, &oldMode);
+    SetConsoleMode(hStdin, oldMode & ~ENABLE_ECHO_INPUT & ~ENABLE_LINE_INPUT);
+
+    string pin;
+    char ch;
+
+    while (true) {
+        ReadConsoleA(hStdin, &ch, 1, &charsRead, NULL);
+        if (ch == '\r' || ch == '\n') {
+            if (pin.length() == 4) {
+                cout << "\n";
+                break;
+            }
+        } else if (ch == '\b') {
+            if (!pin.empty()) {
+                pin.erase(pin.size() - 1);
+                cout << "\b \b";
+            }
+        } else if (ch >= '0' && ch <= '9' && pin.length() < 4) {
+            pin += ch;
+            cout << '*';
+        }
+    }
+
+    SetConsoleMode(hStdin, oldMode);
+    return pin;
+}
+
+bool Myclass::confirmAction(const string &prompt) {
+    char resp;
+    while (true) {
+        cout << prompt << " (Y/N): ";
+        cin >> resp;
+        resp = toupper(resp);
+        if (resp == 'Y') return true;
+        if (resp == 'N') return false;
+        cout << "[!] Invalid input. Enter Y or N.\n";
+    }
+}
+
+int Myclass::locate(string accnum) {
+    Node *p = head;
+    int index = 0;
+    while (p != NULL) {
+        if (p->data.accnum == accnum) return index;
+        p = p->next;
+        index++;
+    }
+    return -1;
+}
+
+Node* Myclass::findNode(string accnum) {
+    Node *p = head;
+    while (p != NULL) {
+        if (p->data.accnum == accnum) return p;
+        p = p->next;
+    }
+    return NULL;
+}
+
+void Myclass::registerAccount() {
+    system("cls");
+    drawHeader("ACCOUNT REGISTRATION");
+
+    Acc x;
+
+    string existingDrive = detectFlashDrive();
+    if (!existingDrive.empty()) {
+        ifstream existingCard(existingDrive + "pin.code");
+        if (existingCard) {
+            cout << "[!] This card already contains an account. Registration is not allowed.\n";
+            existingCard.close();
+            pauseScreen();
+            return;
+        }
+    }
+
+    cin.ignore(1000, '\n');
+    cout << "Enter Account Name (First Middle Last): ";
+    getline(cin, x.accName);
+    while (!isValidName(x.accName)) {
+        cout << "Enter Account Name (First Middle Last): ";
+        getline(cin, x.accName);
+    }
+
+    x.accnum = generateAccNum();
+    cout << "\n[+] Generated Account Number: " << x.accnum << "\n";
+
+    cout << "Enter Birthday (MM/DD/YYYY): ";
+    cin >> x.birthday;
+    while (!isValidDate(x.birthday)) {
+        cout << "Enter Birthday (MM/DD/YYYY): ";
+        cin >> x.birthday;
+    }
+
+    cout << "Enter Initial Deposit (Min " << fixed << setprecision(0) << RegMinDepos << "): P";
+    while (true) {
+        if (!(cin >> x.InitialDep)) {
+            cin.clear();
+            cin.ignore(1000, '\n');
+            cout << "[!] Letters/symbols are not allowed.\n";
+            cout << "Enter Initial Deposit (Min " << fixed << setprecision(0) << RegMinDepos << "): P";
+        } else if (x.InitialDep < RegMinDepos) {
+            cout << "[!] Deposit must be at least P" << fixed << setprecision(0) << RegMinDepos << ".\n";
+            cout << "Enter Initial Deposit: P";
+        } else {
+            break;
+        }
+    }
+
+    cout << "Enter Contact Number (11 digits): ";
+    cin >> x.contNum;
+    while (!isValidContact(x.contNum)) {
+        cout << "Enter Contact Number (11 digits): ";
+        cin >> x.contNum;
+    }
+
+    x.balance = x.InitialDep;
+
+    cout << "Set Your 4-Digit PIN Code: ";
+    cin >> x.pincode;
+    while (!isValidPIN(x.pincode)) {
+        cout << "Set Your 4-Digit PIN Code: ";
+        cin >> x.pincode;
+    }
+
+    cout << "\n[+] Account successfully registered!\n";
+
+    string drivePath = detectFlashDrive();
+    if (drivePath.empty()) {
+        cout << "[!] Warning: No flash drive detected. Card file was not written.\n";
+    } else {
+        writeCardFile(drivePath, x.accnum, x.pincode);
+        cout << "[+] Card data stored on drive " << drivePath << "\n";
+        currentCardPath = drivePath;
+    }
+
+    Node *newNode = new Node(x);
+    if (head == NULL) {
+        head = newNode;
+    } else {
+        Node *last = head;
+        while (last->next != NULL) {
+            last = last->next;
+        }
+        last->next = newNode;
+    }
+
+    savefile();
+    pauseScreen();
+
+    if (!currentCardPath.empty()) {
+        transactionMenu(newNode);
+    }
+}
+
+bool Myclass::verifyPin() {
+    system("cls");
+    drawHeader("ATM CARD VERIFICATION");
+
+    string drivePath;
+
+    do {
+        cout << "[*] Insert your ATM card (Flash Drive).\n";
+        cout << "    Press Enter when ready... ";
+        cin.ignore(1000, '\n');
+        cin.get();
+
+        drivePath = detectFlashDrive();
+        if (drivePath.empty()) {
+            cout << "[!] Drive not detected. Please try again.\n\n";
+        }
+    } while (drivePath.empty());
+
+    cout << "[+] Flash drive detected at " << drivePath << "\n\n";
+
+    ifstream cardFile(drivePath + "pin.code");
+    if (!cardFile) {
+        cout << "[!] No ATM card data found on this drive.\n";
+        pauseScreen();
+        return false;
+    }
+
+    string cardAccNum, encryptedPin;
+    getline(cardFile, cardAccNum);
+    getline(cardFile, encryptedPin);
+    cardFile.close();
+
+    string cardPin = decryptPin(encryptedPin);
+    Node *match = findNode(cardAccNum);
+
+    if (match == NULL || match->data.pincode != cardPin) {
+        cout << "[!] Account not recognized in system database.\n";
+        pauseScreen();
+        return false;
+    }
+
+    for (int tries = 1; tries <= MaxPinTries; tries++) {
+        string enteredPin = readMaskedPin("Enter PIN Code: ");
+
+        if (enteredPin == cardPin && enteredPin == match->data.pincode) {
+            cout << "\n[+] PIN Verified successfully! Granting access...\n";
+            Sleep(800);
+            currentCardPath = drivePath;
+            transactionMenu(match);
+            return true;
+        }
+
+        int remaining = MaxPinTries - tries;
+        if (remaining > 0) {
+            cout << "[!] Incorrect PIN. Attempts remaining: " << remaining << "\n\n";
+        }
+    }
+
+    cout << "\n[!] Access denied. Maximum attempts exceeded.\n";
+    pauseScreen();
+    return false;
+}
+
+void Myclass::checkBalance(Node *p) {
+    system("cls");
+    drawHeader("TRANSACTION: BALANCE INQUIRY");
+
+    printReceiptHeader("BALANCE INQUIRY");
+    printReceiptRow("Account No.", p->data.accnum);
+    printReceiptRow("Account Name", p->data.accName);
+    printReceiptRow("Contact No.", p->data.contNum);
+    printReceiptAmountRow("Current Balance", p->data.balance);
+    printReceiptFooter();
+
+    pauseScreen();
+}
+
+void Myclass::withdraw(Node *p, double amt) {
+    system("cls");
+    drawHeader("TRANSACTION: WITHDRAWAL");
+
+    while (true) {
+        if (amt <= 0) {
+            cout << "\n[!] Invalid withdrawal amount.\n";
+        } else if (amt != (int)amt || (int)amt % 100 != 0) {
+            cout << "\n[!] Withdrawals must be in multiples of 100 (e.g., 500, 1000, 2000).\n";
+        } else if (amt > MaxWithdraw) {
+            cout << "\n[!] Maximum withdrawal limit is P" << fixed << setprecision(0) << MaxWithdraw << ".\n";
+        } else if (amt > p->data.balance) {
+            cout << "\n[!] Insufficient account balance.\n";
+        } else {
+            break;
+        }
+        cout << "Enter Withdrawal Amount: P";
+        while (!(cin >> amt)) {
+            cin.clear();
+            cin.ignore(1000, '\n');
+            cout << "[!] Letters/symbols are not allowed.\n";
+            cout << "Enter Withdrawal Amount: P";
+        }
+    }
+
+    if (!confirmAction("Confirm withdrawal of P" + to_string((int)amt) + "?")) {
+        cout << "\n[*] Transaction cancelled.\n";
+        pauseScreen();
+        return;
+    }
+
+    p->data.balance -= amt;
+    savefile();
+
+    printReceiptHeader("WITHDRAWAL");
+    printReceiptRow("Account No.", p->data.accnum);
+    printReceiptRow("Account Name", p->data.accName);
+    printReceiptAmountRow("Amount Withdrawn", amt);
+    printReceiptAmountRow("Updated Balance", p->data.balance);
+    printReceiptFooter();
+
+    pauseScreen();
+}
+
+void Myclass::deposit(Node *p, double amt) {
+    system("cls");
+    drawHeader("TRANSACTION: DEPOSIT");
+
+    while (true) {
+        if (amt <= 0) {
+            cout << "\n[!] Invalid deposit amount.\n";
+        } else if (amt != (int)amt || (int)amt % 100 != 0) {
+            cout << "\n[!] Deposits must be in multiples of 100.\n";
+        } else if (amt > MaxDeposit) {
+            cout << "\n[!] Maximum deposit limit is P" << fixed << setprecision(0) << MaxDeposit << ".\n";
+        } else {
+            break;
+        }
+        cout << "Enter Deposit Amount: P";
+        while (!(cin >> amt)) {
+            cin.clear();
+            cin.ignore(1000, '\n');
+            cout << "[!] Letters/symbols are not allowed.\n";
+            cout << "Enter Deposit Amount: P";
+        }
+    }
+
+    if (!confirmAction("Confirm deposit of P" + to_string((int)amt) + "?")) {
+        cout << "\n[*] Transaction cancelled.\n";
+        pauseScreen();
+        return;
+    }
+
+    p->data.balance += amt;
+    savefile();
+
+    printReceiptHeader("DEPOSIT");
+    printReceiptRow("Account No.", p->data.accnum);
+    printReceiptRow("Account Name", p->data.accName);
+    printReceiptAmountRow("Amount Deposited", amt);
+    printReceiptAmountRow("Updated Balance", p->data.balance);
+    printReceiptFooter();
+
+    pauseScreen();
+}
+
+void Myclass::printRecipientReceipt(Node *recipient, Node *sender, double amt) {
+    cout << "\n>>> RECEIPT GENERATED FOR RECIPIENT'S ACCOUNT <<<\n";
+    printReceiptHeader("INCOMING TRANSFER");
+    printReceiptRow("Recipient Acc. No.", recipient->data.accnum);
+    printReceiptRow("Sender Acc. No.", sender->data.accnum);
+    printReceiptAmountRow("Amount Received", amt);
+    printReceiptAmountRow("Updated Balance", recipient->data.balance);
+    printReceiptFooter();
+}
+
+void Myclass::fundTransfer(Node *sender, const string &recipientAcc, double amt) {
+    system("cls");
+    drawHeader("TRANSACTION: FUND TRANSFER");
+
+    if (recipientAcc == sender->data.accnum) {
+        cout << "[!] Cannot transfer funds to your own account.\n";
+        pauseScreen();
+        return;
+    }
+    if (amt <= 0 || amt > sender->data.balance) {
+        cout << "[!] Invalid amount or insufficient funds.\n";
+        pauseScreen();
+        return;
+    }
+
+    Node *recipient = findNode(recipientAcc);
+    if (recipient == NULL) {
+        cout << "[!] Recipient account not found in system.\n";
+        pauseScreen();
+        return;
+    }
+
+    if (!confirmAction("Confirm transfer of P" + to_string((int)amt) + " to Acc #" + recipientAcc + "?")) {
+        cout << "\n[*] Transfer cancelled.\n";
+        pauseScreen();
+        return;
+    }
+
+    sender->data.balance -= amt;
+    recipient->data.balance += amt;
+    savefile();
+
+    // Sender POV
+    printReceiptHeader("FUND TRANSFER");
+    printReceiptRow("Sender Acc. No.", sender->data.accnum);
+    printReceiptRow("Recipient Acc. No.", recipient->data.accnum);
+    printReceiptAmountRow("Amount Transferred", amt);
+    printReceiptAmountRow("Remaining Balance", sender->data.balance);
+    printReceiptFooter();
+
+    // Recipient POV
+    printRecipientReceipt(recipient, sender, amt);
+
+    pauseScreen();
+}
+
+void Myclass::changePin(Node *p, const string &oldPin, const string &newPin) {
+    system("cls");
+    drawHeader("TRANSACTION: CHANGE PIN");
+
+    if (oldPin != p->data.pincode) {
+        cout << "[!] Incorrect current PIN.\n";
+        pauseScreen();
+        return;
+    }
+    if (!isValidPIN(newPin)) {
+        pauseScreen();
+        return;
+    }
+    if (newPin == oldPin) {
+        cout << "[!] New PIN must be different from current PIN.\n";
+        pauseScreen();
+        return;
+    }
+
+    p->data.pincode = newPin;
+    savefile();
+
+    if (!currentCardPath.empty()) {
+        writeCardFile(currentCardPath, p->data.accnum, newPin);
+    }
+
+    printReceiptHeader("PIN CHANGE");
+    printReceiptRow("Account No.", p->data.accnum);
+    printReceiptRow("Account Name", p->data.accName);
+    printReceiptRow("Status", "SUCCESSFUL");
+    printReceiptFooter();
+
+    pauseScreen();
+}
+
+void Myclass::transactionMenu(Node *p) {
+    int txChoice;
+    do {
+        system("cls");
+        drawHeader("WELCOME, " + p->data.accName);
+        cout << " [1] Balance Inquiry\n"
+             << " [2] Withdraw\n"
+             << " [3] Deposit\n"
+             << " [4] Fund Transfer\n"
+             << " [5] Change PIN Code\n"
+             << " [6] Eject Card & Exit\n"
+             << "--------------------------------------------------\n"
+             << "Enter selection: ";
+
+        if (!(cin >> txChoice)) {
+            cin.clear();
+            cin.ignore(1000, '\n');
+            cout << "[!] Invalid input. Choose numbers 1 to 6.\n";
+            Sleep(800);
+            continue;
+        }
+
+        switch (txChoice) {
+            case 1:
+                checkBalance(p);
+                break;
+            case 2: {
+                double amt;
+                cout << "Enter Withdrawal Amount: P";
+                while (!(cin >> amt)) {
+                    cin.clear();
+                    cin.ignore(1000, '\n');
+                    cout << "[!] Letters/symbols are not allowed.\n";
+                    cout << "Enter Withdrawal Amount: P";
+                }
+                withdraw(p, amt);
+                break;
+            }
+            case 3: {
+                double amt;
+                cout << "Enter Deposit Amount: P";
+                while (!(cin >> amt)) {
+                    cin.clear();
+                    cin.ignore(1000, '\n');
+                    cout << "[!] Letters/symbols are not allowed.\n";
+                    cout << "Enter Deposit Amount: P";
+                }
+                deposit(p, amt);
+                break;
+            }
+            case 4: {
+                string recipient;
+                double amt;
+
+                cout << "Enter Recipient Account Number (5 digits): ";
+                cin >> recipient;
+                while (!isValidAccNum(recipient)) {
+                    cout << "Enter Recipient Account Number (5 digits): ";
+                    cin >> recipient;
+                }
+
+                cout << "Enter Transfer Amount: P";
+                while (!(cin >> amt)) {
+                    cin.clear();
+                    cin.ignore(1000, '\n');
+                    cout << "[!] Letters/symbols are not allowed.\n";
+                    cout << "Enter Transfer Amount: P";
+                }
+                fundTransfer(p, recipient, amt);
+                break;
+            }
+            case 5: {
+                string oldP = readMaskedPin("Enter Current PIN: ");
+                string newP = readMaskedPin("Enter New PIN: ");
+                changePin(p, oldP, newP);
+                break;
+            }
+            case 6:
+                system("cls");
+                cout << "\n==================================================\n";
+                cout << "   Card Ejected. Please remove your USB device.   \n";
+                cout << "            Thank you for banking with us!        \n";
+                cout << "==================================================\n\n";
+                Sleep(1200);
+                break;
+            default:
+                cout << "[!] Invalid selection. Choose from 1 to 6.\n";
+                Sleep(800);
+        }
+    } while (txChoice != 6);
+}
+
+void Myclass::savefile() {
+    ofstream outFile("accounts.csv");
+    if (!outFile) return;
+
+    Node *p = head;
+    while (p != NULL) {
+        outFile << p->data.accnum   << ","
+                << p->data.accName  << ","
+                << p->data.birthday << ","
+                << p->data.contNum  << ","
+                << p->data.InitialDep << ","
+                << p->data.pincode  << ","
+                << p->data.balance  << "\n";
+        p = p->next;
+    }
+    outFile.close();
+}
+
+void Myclass::loadfile() {
+    ifstream inFile("accounts.csv");
+    if (!inFile) return;
+
+    Node *p;
+    while (head != NULL) {
+        p = head;
+        head = head->next;
+        delete p;
+    }
+
+    string line;
+    while (getline(inFile, line)) {
+        if (line.empty()) continue;
+
+        stringstream ss(line);
+        string token;
+        Acc x;
+
+        getline(ss, x.accnum, ',');
+        getline(ss, x.accName, ',');
+        getline(ss, x.birthday, ',');
+        getline(ss, x.contNum, ',');
+        getline(ss, token, ','); x.InitialDep = stod(token);
+        getline(ss, x.pincode, ',');
+        getline(ss, token, ','); x.balance = stod(token);
+
+        Node *newNode = new Node(x);
+        if (head == NULL) {
+            head = newNode;
+        } else {
+            Node *last = head;
+            while (last->next != NULL) {
+                last = last->next;
+            }
+            last->next = newNode;
+        }
+    }
+    inFile.close();
+}
+
+int main() {
+    Myclass bank;
+    bank.loadfile();
+
+    int choice;
+    do {
+        system("cls");
+        cout << "==================================================\n";
+        cout << "            WELCOME TO ATM BANKING SYSTEM         \n";
+        cout << "==================================================\n";
+        cout << "  Are you registered?\n";
+        cout << "--------------------------------------------------\n";
+        cout << "  [1] Yes (Insert Card & Login)\n";
+        cout << "  [2] No  (Create New Account)\n";
+        cout << "  [3] Exit System\n";
+        cout << "--------------------------------------------------\n";
+        cout << "Enter selection: ";
+
+        if (!(cin >> choice)) {
+            cin.clear();
+            cin.ignore(1000, '\n');
+            cout << "[!] Invalid input. Choose 1, 2, or 3.\n";
+            Sleep(800);
+            continue;
+        }
+
+        switch (choice) {
+            case 1: {
+                bank.verifyPin();
+                break;
+            }
+            case 2: {
+                bank.registerAccount();
+                break;
+            }
+            case 3:
+                system("cls");
+                cout << "\n==================================================\n";
+                cout << "      System Shutting Down... Have a Great Day!   \n";
+                cout << "==================================================\n\n";
+                break;
+            default:
+                cout << "[!] Invalid choice! Select 1, 2, or 3.\n";
+                Sleep(800);
+        }
+    } while (choice != 3);
+
+    return 0;
+}
